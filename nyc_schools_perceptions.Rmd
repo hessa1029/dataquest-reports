@@ -1,0 +1,125 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+The following packages have been installed to manipulate our dataset and visualize details about them.
+
+```{r}
+library(readr)
+library(dplyr)
+library(purrr)
+library(ggplot2)
+library(stringr)
+library(tidyr)
+```
+
+The following details we are bringing in are demographic and test score data from the New York City Department of Education as well as survey data for general education schools.
+
+```{r}
+combined <- read_csv('combined.csv')
+survey_all <- read_tsv('masterfile11_gened_final.txt')
+survey_d75 <- read_tsv('masterfile11_d75_final.txt')
+```
+
+Filter survey dataset to only include high school data
+
+```{r}
+survey_filtered <- survey_all %>%
+  filter(schooltype == 'High School') %>%
+  select(dbn:aca_tot_11)
+```
+
+Narrow d75 survey data to only the columns we care to look at
+
+```{r}
+survey_d75_filtered <- survey_d75 %>%
+  select(dbn:aca_tot_11)
+```
+
+Join both survey data frames and rename key column to match
+
+```{r}
+survey_combined <- survey_filtered %>%
+  bind_rows(survey_d75_filtered)
+```
+```{r}
+survey_combined <- survey_combined %>%
+  rename(DBN = dbn)
+```
+
+Combine the original dataset with the newly combined survey data. Join on DBN
+
+```{r}
+combined_w_survey <- combined %>%
+  left_join(survey_combined, by = "DBN")
+```
+
+Review correlations between the avg_sat_score and all variables
+
+```{r}
+cor_mat <- combined_w_survey %>%
+  select(avg_sat_score, saf_p_11:aca_tot_11) %>%
+  cor(use = 'pairwise.complete.obs')
+
+cor_tib <- cor_mat %>%
+  as_tibble(rownames = 'variable')
+```
+
+Narrow the correlations to only those that appear to be strong
+
+```{r}
+strong_correlations <- cor_tib %>%
+  select(variable, avg_sat_score) %>%
+  filter(avg_sat_score > 0.25 | avg_sat_score < -0.25)
+```
+
+Generate scatter plots to review the correlations
+
+```{r}
+create_scatter <- function(x, y) {
+  ggplot(data = combined_w_survey) +
+    aes_string(x = x, y = y) +
+    geom_point(alpha = 0.3) +
+    theme(panel.background = element_rect(fill = 'white'))
+}
+
+x_var <- strong_correlations$variable[2:5]
+y_var <- 'avg_sat_score'
+
+map2(x_var, y_var, create_scatter)
+```
+
+Let's re-shape to look at survey results from students, parents and teachers
+
+```{r}
+combined_w_survey_gather <- combined_w_survey %>%
+  gather(key = 'survey_question', value = score, saf_p_11:aca_tot_11)
+```
+
+```{r}
+combined_w_survey_gather <- combined_w_survey_gather %>%
+  mutate(response_type = str_sub(survey_question, 4, 6)) %>%
+  mutate(question = str_sub(survey_question, 1, 3))
+```
+
+Identify the different types of responses based on column naming
+
+```{r}
+combined_w_survey_gather <- combined_w_survey_gather %>%
+  mutate(response_type = ifelse(response_type == '_p_', 'parent',
+                                ifelse(response_type == '_t_', 'teacher',
+                                       ifelse(response_type == '_s_', 'student',
+                                              ifelse(response_type == '_to', 'total', 'NA')))))
+```
+
+Finally generate a boxplot to review differents between the responder types
+
+```{r}
+combined_w_survey_gather %>%
+  filter(response_type != 'total') %>%
+  ggplot() +
+  aes(x = question, y = score, fill = response_type) +
+  geom_boxplot()
+```
+
