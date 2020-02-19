@@ -1,0 +1,249 @@
+---
+title: "Guided Project: Answering Business Questions using SQL"
+output: html_notebook
+---
+
+Install packages for working with SQLite
+```{r}
+library(RSQLite)
+library(DBI)
+```
+
+Create a function to take in a query and return the result in a dataframe
+```{r}
+run_query <- function(query) {
+  conn <- dbConnect(SQLite(), 'chinook.db')
+  result <- dbGetQuery(conn, query)
+  dbDisconnect(conn)
+  return(result)
+}
+```
+
+Create a function to call run_query() function and return list of all tables and views in DB
+```{r}
+show_tables <- function() {
+  query = "SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view');"
+  return(run_query(query))
+}
+```
+
+```{r}
+show_tables()
+```
+
+```{r}
+q1 = '
+WITH usa_tracks_sold AS
+(
+  SELECT
+    il.*
+  FROM invoice_line il
+  INNER JOIN invoice i ON il.invoice_id = i.invoice_id
+  INNER JOIN customer c ON i.customer_id = c.customer_id
+  WHERE c.country = "USA"
+)
+
+SELECT
+  g.name genre,
+  count(uts.invoice_line_id) tracks_sold,
+  cast(count(uts.invoice_line_id) AS FLOAT) / (SELECT COUNT(*) FROM usa_tracks_sold) percentage_sold
+FROM genre g
+INNER JOIN track t ON g.genre_id = t.genre_id
+INNER JOIN usa_tracks_sold uts ON t.track_id = uts.track_id
+GROUP BY 1
+ORDER BY 2 DESC
+LIMIT 10;
+'
+
+run_query(q1)
+```
+
+```{r}
+library(ggplot2)
+
+genre_sales_usa = run_query(q1)
+ggplot(data=genre_sales_usa) + 
+  aes(x = reorder(genre, -percentage_sold), y = percentage_sold) +
+  geom_bar(stat = 'identity')
+```
+
+Given our list of four artists and their genre as well as the records of sales of tracks by genre, it seems our top three would be:
+
+1. Red Tone (Punk)
+2. Slim Jim Bites(Blues)
+3. Meteor and the Girls (Pop)
+
+However, even given these choices, Rock is still the majority of sales. We should really look at alternatives that fall under the Rock genre.
+
+```{r}
+q2 = '
+WITH customer_support_rep_sales AS
+(
+  SELECT
+    i.customer_id,
+    c.support_rep_id,
+    SUM(i.total) total_sales
+  FROM customer c
+  INNER JOIN invoice i ON c.customer_id = i.customer_id
+  GROUP BY 1, 2
+)
+
+SELECT
+  e.first_name || " " || e.last_name employee_name,
+  e.hire_date,
+  SUM(csrs.total_sales) total_sales
+FROM customer_support_rep_sales csrs
+INNER JOIN employee e ON e.employee_id = csrs.support_rep_id
+GROUP BY 1;
+'
+
+run_query(q2)
+```
+
+```{r}
+employee_sales = run_query(q2)
+ggplot(data = employee_sales, aes(x = reorder(employee_name, -total_sales), y = total_sales)) +
+  geom_bar(stat = 'identity')
+```
+
+Looking at the raw results, Jane Peacock had the most sales. However, considering that total sales were higher as length of time of employment increased, it is a little harder to see who is performing best. We would probably have better insight if we were to normalize the sales based on lenght of employment.
+
+```{r}
+q3 = '
+WITH country_or_other AS
+(
+  SELECT
+    CASE
+      WHEN (
+            SELECT COUNT(*)
+            FROM customer
+            WHERE country = c.country
+            ) = 1 THEN "Other"
+      ELSE c.country
+    END country,
+    c.customer_id,
+    il.*
+  FROM customer c
+  INNER JOIN invoice i ON i.customer_id = c.customer_id
+  INNER JOIN invoice_line il ON i.invoice_id = il.invoice_id
+)
+
+SELECT
+  country,
+  num_customers,
+  total_sales,
+  customer_lifetime_value,
+  average_order_value
+FROM (
+      SELECT
+        country,
+        count(distinct customer_id) num_customers,
+        SUM(unit_price) total_sales,
+        SUM(unit_price) / count(distinct customer_id) customer_lifetime_value,
+        SUM(unit_price) / count(distinct invoice_id) average_order_value,
+        CASE
+          WHEN country = "Other" THEN 1
+          ELSE 0
+        END sort
+      FROM country_or_other
+      GROUP BY country
+      ORDER BY 6, 3 DESC
+      );
+'      
+run_query(q3)
+```
+
+```{r}
+country_details = run_query(q3)
+
+ggplot(data = country_details, aes(x = reorder(country, -total_sales), y = total_sales, fill = country)) +
+  geom_bar(stat = 'identity') +
+  labs(title = 'Total Sales by Country',
+       x = 'Country',
+       y = 'Total Sales') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot(data = country_details, aes(x = reorder(country, -num_customers), y = num_customers, fill = country)) +
+  geom_bar(stat = 'identity') +
+  labs(title = 'Number of Customers by Country',
+       x = 'Country',
+       y = 'Number of Customers') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot(data = country_details, aes(x = reorder(country, -customer_lifetime_value), y = customer_lifetime_value, fill = country)) +
+  geom_bar(stat = 'identity') +
+  labs(title = 'Customer Lifetime Value by Country',
+       x = 'Country',
+       y = 'Customer Lifetime Value') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot(data = country_details, aes(x = reorder(country, -average_order_value), y = average_order_value, fill = country)) +
+  geom_bar(stat = 'identity') +
+  labs(title = 'Average Order Value by Country',
+       x = 'Country',
+       y = 'Average Order Value') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+USA definitely has the most customers, but the value per customer seems to be lower than some others. Some interesting countries to pursue might be the Czech Republic, India, Portugal and United Kingdom. All of these have a lower number of customers, however, the customers all seem to spend more on average. This may indicate that these markets would be more lucrative if they were built up further.
+
+```{r}
+q4 = '
+WITH invoice_first_track AS
+(
+  SELECT
+    il.invoice_id,
+    MIN(il.track_id) first_track_id
+  FROM invoice_line il
+  GROUP BY 1
+)
+
+SELECT
+  album_purchase,
+  COUNT(invoice_id) num_invoices,
+  CAST(COUNT(invoice_id) AS FLOAT) / (
+                                      SELECT COUNT(*) FROM invoice
+                                      ) percent_of_invoices
+FROM (
+        SELECT
+          ifs.*,
+          CASE
+            WHEN
+              (SELECT
+                  t.track_id
+                FROM track t
+                WHERE t.album_id = (
+                                    SELECT t2.album_id FROM track t2
+                                    WHERE t2.track_id = ifs.first_track_id
+                                    )
+                
+                EXCEPT
+                
+                SELECT il2.track_id FROM invoice_line il2
+                WHERE il2.invoice_id = ifs.invoice_id
+              ) IS NULL
+            AND
+              (
+              SELECT il2.track_id FROM invoice_line il2
+              WHERE il2.invoice_id = ifs.invoice_id
+              
+              EXCEPT
+              
+              SELECT t.track_id FROM track t
+              WHERE t.album_id = (
+                                  SELECT t2.album_id FROM track t2
+                                  WHERE t2.track_id = ifs.first_track_id
+                                  )
+              ) IS NULL
+            THEN "yes"
+            ELSE "no"
+          END album_purchase
+        FROM invoice_first_track ifs
+      )
+GROUP BY album_purchase;
+'
+
+run_query(q4)
+```
+
+Based on findings, album purchases are about 18% of all purchases. While this is by far, lower than the non-album purchases, we would be losing out on a significant amount of sales if we went to only track purchases. I would still recommend that albums be bought to keep more of the market.
