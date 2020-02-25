@@ -1,0 +1,177 @@
+---
+title: "Investigating Fandango Movie Ratings"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+In 2015, Walt Hickey did an investigation into potential bias in Fandango's rating system for movies. His results showed a definite bias. We are going to attempt a similar analysis to see if we get the same findings.
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(stringr)
+library(readr)
+library(tidyr)
+```
+
+```{r}
+previous_ratings <- read_csv('fandango_score_comparison.csv')
+head(previous_ratings)
+```
+
+```{r}
+after_ratings <- read_csv('movie_ratings_16_17.csv')
+head(after_ratings)
+```
+
+```{r}
+previous_rating_info <- previous_ratings %>% 
+  select(FILM,Fandango_Stars,Fandango_Ratingvalue,Fandango_votes,Fandango_Difference)
+
+after_rating_info <- after_ratings %>%
+  select(movie, year, fandango)
+```
+
+Our goal here is to look at before and after the article was released to see if Fandango has adjusted their rating system to have less bias.
+
+We want to look at a sample of the population to make our decision, taking a sample from before the article and a sample from after.
+
+Both datasets probably have some bias to them that would prevent them from being totally representative of the population.
+
+The dataset from before the article only looks at movies with 30 or mroe fan ratings and were for movies with ticket sales from 2015 only. This limits us to assuming sales in 2015 were the same as any other year and it excludes many other movies that may have had an impact.
+
+The dataset from after the article is from 2016 or 2017, meaning the different year could have had overall different ratings based on teh movies. It also limited the dataset to those with a considerable number of votes or reviews which is not really well defined.
+
+We'll change our goal slightly now to just compare whether there is a difference in Fandango's ratings from 2015 to 2016+ for popular movies.
+
+We will define popular movies as those with 30 or more fan ratings.
+
+```{r}
+set.seed(1)
+sample_n(after_rating_info, size = 10)
+```
+
+It appears that Fandango no longer uses the out of 5 rating. It now uses Rotten Tomatoes method of rating. We will use the number fo ratings from Rotten Tomatoes instead.
+
+```{r}
+set.seed(1)
+sampled <- sample_n(after_rating_info, size = 10)
+review_counts <- tibble(c(5263, 7228, 7251, 12105, 30235, 279, 13667, 1207, 56792, 9178))
+bind_cols(sampled, review_counts)
+```
+
+All of these films have plenty of ratings from Rotten Tomatoes
+
+```{r}
+sum(previous_rating_info$Fandango_votes < 30)
+```
+
+There are no movies in the previous list that have below 30 ratings.
+
+There are also some movies that were not released in either 2015 or 2016. We want to isolate the years that we are interest in from the rest of the data.
+
+```{r}
+previous_rating_info <- previous_rating_info %>%
+  mutate(year = str_sub(FILM, -5, -2))
+
+head(previous_rating_info)
+```
+
+```{r}
+previous_rating_info %>%
+  group_by(year) %>%
+  summarize(Freq = n())
+```
+
+```{r}
+previous_2015 <- previous_rating_info %>%
+  filter(year == 2015)
+table(previous_2015$year)
+```
+
+after2016 <- after_
+```{r}
+after2016 <- after_rating_info %>%
+  filter(year == 2016)
+table(after2016$year)
+```
+
+To make our comparison of these two datasets, we'll look at kernel density plots for the two to see what we can determine.
+
+```{r}
+ggplot(data = previous_2015,
+       aes(x = Fandango_Stars)) +
+  geom_density() +
+  geom_density(data = after2016,
+               aes(x = fandango), color = "blue") +
+  labs(title = "Comparison of Fandango Ratings from 2015 and 2016",
+       x = "Star Rating",
+       y = "Density") +
+  scale_x_continuous(breaks = seq(0, 5, by = 0.5),
+                     limits = c(0,5))
+```
+
+Both plots seemed to be skewed left indicating that not many movies get low ratings. It does appear that where we see the largest grouping of ratings is lower for 2016 as compared to 2015. The center seemed to be around 4.5 in 2015 and 4.0 in 2016. However, for both of them, there are not a lot of low ratings. At the same time, it does seem that ratings above 4 decreased significantly in 2016. This could just be due to the year, but it seems to answer our question of comparing year-to-year.
+
+```{r}
+previous_2015 %>%
+  group_by(Fandango_Stars) %>%
+  summarize(Percentage = n() / nrow(previous_2015) * 100)
+```
+
+```{r}
+after2016 %>%
+  group_by(fandango) %>%
+  summarize(Percentage = n() / nrow(after2016) * 100)
+```
+
+The freqeuency distributions for the two of these paint a definite picture that there is a difference as noted by almost no 5.0 ratings in the 2016 dataset and a much larger concentration around 4.0 ratings rather than the previous 4.5.
+
+Given that there is no mode funciton built in to R, we are using a customer mode function found on stackoverflow.
+
+```{r}
+mode <- function(x) {
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
+}
+```
+
+```{r}
+summary_2015 <- previous_2015 %>%
+  summarize(year = "2015",
+            mean = mean(Fandango_Stars),
+            median = median(Fandango_Stars),
+            mode = mode(Fandango_Stars))
+
+summary_2016 <- after2016 %>%
+  summarize(year = "2016",
+            mean = mean(fandango),
+            median = median(fandango),
+            mode = mode(fandango))
+
+summary <- bind_rows(summary_2015, summary_2016)
+
+summary <- summary %>%
+  gather(key = "statistic", value = "value", -year)
+
+summary
+```
+
+```{r}
+ggplot(data = summary,
+       aes(x = statistic,
+           y = value,
+           fill = year)) +
+  geom_bar(stat = "identity",
+           position = "dodge") +
+  labs(title = "Comparison of summary statistics for Fandango Ratings: 2015 vs 2016",
+       x = "",
+       y = "Star Rating")
+```
+
+We can see a change in both the mean and mode from 2015 to 2016, but the center still seems to be around the same rating.
+
+Interestingly, the fact that we saw a shift away from the higher values and a shift from the mode being 4.5 to 4.0 seems to indicate they did something to adjust the rounding to move the values to the appropriate 0.5 star. We would need to dig further to know for sure though.
