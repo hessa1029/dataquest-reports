@@ -1,0 +1,283 @@
+---
+title: "Finding the Best Markets to Advertise In"
+output: html_document
+---
+
+For this guided project, we'll be looking at advertising for our e-learning company. To do this, we'll be looking at an existing survey of new coders to determine the best markets to advertise in.
+
+```{r}
+library(readr)
+library(ggplot2)
+library(dplyr)
+```
+
+
+```{r}
+fcc <- read_csv('2017-fCC-New-Coders-Survey-Data.csv')
+dim(fcc)
+head(fcc, 5)
+```
+
+The benefit of using ready-made sata sets in our case is that we don't have to take the time to gather our own. The data is coming from a reliable source in the field, allowing us to extract useful information quickly. This data can be found at: https://github.com/freeCodeCamp/2017-new-coder-survey.
+
+# Does this sample represent the population?
+
+We are mainly interested in web and mobile development courses, but we also cover other topics. We want to first see whether this dataset is representative our our customers. We'll look at:
+
+ * Location of coders
+ * Locations of highest density of coders
+ * Amount that coders are willing to spend for learning.
+ 
+```{r}
+fcc %>%
+  group_by(JobRoleInterest) %>%
+  summarize(freq = n()*100/nrow(fcc)) %>%
+  arrange(desc(freq))
+```
+
+The information we gather from that provides us with a few details:
+
+* Many are interesting in web development,
+* Some are interested in mobile development
+* Some are interested in other domations
+* Many are interest in more than one topic
+
+To dig a little deeper, let's split out the people with multiple interests to figure out what they like
+
+```{r}
+split_interest <- fcc %>%
+  select(JobRoleInterest) %>%
+  tidyr::drop_na() %>%
+  rowwise %>%
+  mutate(options_count = length(stringr::str_split(JobRoleInterest, ",")[[1]]))
+
+n_options <- split_interest %>%
+  ungroup() %>%
+  group_by(options_count) %>%
+  summarize(freq = n()*100/nrow(split_interest))
+
+n_options
+```
+
+Around 31% have their focus narrowed to a single topic, while the majority are split between multiple topics.
+
+This information still doesn't tell us who is focused on web or mobile development, so we need to dig a bit further.
+
+```{r}
+web_or_mobile <- stringr::str_detect(fcc$JobRoleInterest, "Web Developer|MobileDeveloper")
+freq_table <- table(web_or_mobile)
+freq_table <- freq_table * 100 / sum(freq_table)
+freq_table
+
+df <- tibble::tibble(x = c('Other', 'Web or Mobile'),
+                     y = freq_table)
+
+ggplot(data = df,
+       aes(x = x, y = y, fill = x)) +
+  geom_histogram(stat = 'identity')
+```
+ 
+This graph paints us a very promising picture of our data. It seems that a much higher percentage are interest in web or mobile development. They just happen to be grouped in with those that are interest in multiple topics.
+ 
+Given this information, it appears our dataset is representative of the population we are looking for, so we can proceed.
+
+Next, we will be looking at the best markets for investing money for advertising. It would be helpful to know details about the coders surveyed such as their locations and the locations with the most coders as well as spending habits of these coders, or at least what they say they are willing to spend.
+
+While the dataset tells us both where someone was born and where they currently live, we are only interested in where they currently live as this can act as a representation of the market we would want to advertise in. 
+
+Let's remove rows where the participant didn't specify a specific role and then review the data.
+
+```{r}
+fcc_known <- fcc %>%
+  tidyr::drop_na(JobRoleInterest)
+
+fcc_known %>%
+  group_by(CountryLive) %>%
+  summarize('Absolute frequency' = n(),
+            'Percentage' = n() * 100 / nrow(fcc_known)) %>%
+  arrange(desc(Percentage))
+```
+
+The United States had the vast majority of potential coders. India, the United Kingdom and Canada were much lower, but all relatively close for the second market. To determine the best, we want to consider if these coders in these locations are willing to spend money. If they will only code for free, then it isn't a market worth pursuing.
+
+We can look at the MoneyForLearning column to see how much money total each has spent on learning up until they took the survey. Given our company's model of charging $59 per month, we will analyze this column as to what it tells us about spending per month. We'll also focus on the top four countries that we found based on frequency above.
+
+```{r}
+fcc_known <- fcc_known %>%
+  mutate(MonthsProgramming = replace(MonthsProgramming, MonthsProgramming == 0, 1))
+
+fcc_known <- fcc_known %>%
+  mutate(money_per_month = MoneyForLearning / MonthsProgramming)
+
+fcc_known %>%
+  summarize(na_count = sum(is.na(money_per_month))) %>%
+  pull(na_count)
+```
+
+```{r}
+fcc_known <- fcc_known %>%
+  tidyr::drop_na(money_per_month)
+```
+
+```{r}
+fcc_known <- fcc_known %>%
+  tidyr::drop_na(CountryLive)
+
+fcc_known %>%
+  group_by(CountryLive) %>%
+  summarize(freq = n()) %>%
+  arrange(desc(freq))
+```
+
+
+```{r}
+countries_mean <- fcc_known %>%
+  filter(CountryLive == 'United States of America' | CountryLive == 'India' | CountryLive == 'United Kingdom' | CountryLive == 'Canada') %>%
+  group_by(CountryLive) %>%
+  summarize(mean = mean(money_per_month)) %>%
+  arrange(desc(mean))
+
+countries_mean
+```
+
+The results for the United States are note surprising, but the results for Canada and the UK are somewhat low compared with India. We would expect those two countries to have higher spenders based on GDP, but it doesn't appear to be the case. Perhaps we don't have enough data to represent these countries.
+
+Let's remove outliers to see if that affects the results.
+
+```{r}
+top_4 <- fcc_known %>%
+  filter(CountryLive == 'United States of America' | CountryLive == 'India' | CountryLive == 'United Kingdom' | CountryLive == 'Canada')
+
+top_4 <- top_4 %>%
+  mutate(index = row_number())
+
+ggplot(data = top_4,
+       aes(x = CountryLive, y = money_per_month)) +
+  geom_boxplot() +
+  xlab('Country') +
+  ylab('Money Per Month')
+```
+
+Outliers seem to exist, but it's difficult to tell with the two significant outliers above $20,000. Let's remove those and re-evaluate.
+
+```{r}
+fcc_known <- fcc_known %>%
+  filter(money_per_month < 20000)
+
+countries_mean <- fcc_known %>%
+  filter(CountryLive == 'United States of America' | CountryLive == 'India' | CountryLive == 'United Kingdom' | CountryLive == 'Canada') %>%
+  group_by(CountryLive) %>%
+  summarize(mean = mean(money_per_month)) %>%
+  arrange(desc(mean))
+
+countries_mean
+```
+
+```{r}
+top_4 <- fcc_known %>%
+  filter(CountryLive == 'United States of America' | CountryLive == 'India' | CountryLive == 'United Kingdom' | CountryLive == 'Canada')
+
+top_4 <- top_4 %>%
+  mutate(index = row_number())
+
+ggplot(data = top_4,
+       aes(x = CountryLive, y = money_per_month)) +
+  geom_boxplot() +
+  xlab('Country') +
+  ylab('Money Per Month')
+```
+
+We see a few outliers for India, but perhaps these were due to some expensive training. Let's dig a little further into these.
+
+```{r}
+india_outliers <- top_4 %>%
+  filter(CountryLive == 'India' & money_per_month > 2500)
+
+india_outliers
+```
+
+Given that they haven't even attended a bootcamp, it doesn't make a lot of sense that they would plan to spend that amount per month. Let's remove these for now.
+
+```{r}
+top_4 <- top_4 %>%
+  filter(!(index %in% india_outliers$index))
+```
+
+The US also seems to have some outliers. They appear to break off around $6,000. Let's consider those.
+
+```{r}
+us_outliers <- top_4 %>%
+  filter(CountryLive == 'United States of America' & money_per_month > 6000)
+
+us_outliers
+```
+
+It does appear that a portion of these outliers were coders who attended a bootcamp. However, this is still not very representative of our overall population. We'll still remove these for analysis.
+
+```{r}
+top_4 <- top_4 %>%
+  filter(!(index %in% us_outliers$index))
+```
+
+There was also one significant outlier for Canada above $2500. Let's review this data point.
+
+```{r}
+canada_outliers <- top_4 %>%
+  filter(CountryLive == 'Canada' & money_per_month > 2500)
+
+canada_outliers
+```
+
+This person also attended a bootcamp, but also had only been coding for a short while, skewing the mean. Let's remove this point as well.
+
+```{r}
+top_4 <- top_4 %>%
+  filter(!(index %in% canada_outliers$index))
+```
+
+Let's re-evaluate the data one last time.
+
+```{r}
+countries_mean <- top_4 %>%
+  group_by(CountryLive) %>%
+  summarize(mean = mean(money_per_month)) %>%
+  arrange(desc(mean))
+
+countries_mean
+```
+
+```{r}
+ggplot(data = top_4,
+       aes(x = CountryLive, y = money_per_month)) +
+  geom_boxplot() +
+  xlab('Country') +
+  ylab('Money Per Month')
+```
+
+The U.S. is definitely a market we would want to market in. For the second market, this analysis now reveals that Canada may be a better second choice than India based on the amount that a coder is willing to spend per month and the close percentage of the population that fit our market. These results also lower our interest in the U.K. even further with a lower average money spent per month.
+
+India is still above our goal of $59 per month and does have more potential customers than Canada, so let's review these customers one last time.
+
+```{r}
+top_4 %>%
+  group_by(CountryLive) %>%
+  summarize(freq = n()) %>%
+  arrange(desc(freq))
+```
+
+```{r}
+top_4 %>%
+  group_by(CountryLive) %>%
+  summarize(freq = n() * 100 / nrow(top_4)) %>%
+  arrange(desc(freq))
+```
+
+While we originally set out to market to only two countries, I think we should reconsider marketing to three countries based on these results. We could easily do a split based on some combination of the percentage of the market and the amount they are willing to spend. Perhaps we would allocate 70% to the U.S. and then a split of something like 15% and 15% between each of India and Canada.
+
+It would probably be best to let the marketing team decide on the best way to split this overall as they will have a better understanding of these markets and their potentials.
+
+# Conclusion
+
+We reviewed data from a survey that represented the population of potential coders. We looked at which two markets appeared to have the best potential for our company to advertise in.
+
+In our findings, we found a significant first place market, but it wasn't so cut and dry for the second market. Both India and Canada showed potential. We left the final decision on how to split between the markets to the marketing team.
