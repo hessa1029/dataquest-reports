@@ -1,0 +1,137 @@
+---
+title: "Guided Project: Mobile App for Lottery Addiction"
+output: html_document
+---
+
+In this project, we will be analyzing the probabilities associated with winning the lottery in order to help develop an app to guide lottery addicts through exercises to help them estimate their changes of winning. The hope is that they will realize how little it helps to win by buying too many tickets.
+
+For the purposes of this project, it will be helpful to have functions to calculate both factorials and combinations. Let's develop these functions first. We'll use recursive functions to simplify the design.
+
+```{r}
+factorial <- function(n) {
+  if (n <= 1) {
+    return(1)
+  }
+  else {
+    return(n * factorial(n-1))
+  }
+}
+
+combination <- function(n, k) {
+  factorial(n) / (factorial(k) * factorial(n-k))
+}
+```
+
+# Calculating the probability of winning the big prize
+
+We'll first work on building a function to calculate the probability of winning the big prize. In order to do this, we need to know some details about the setup of the lottery.
+
+* Numbers drawn are from 1-49
+* In order to win, a player must match all 6 numbers drawn from the 49 possible
+
+For this preliminary app, we will allow players to select combinations of 6 numbers for their "ticket" and then the function will print the probability value in a way that anyone without probability training would understand.
+
+```{r}
+one_ticket_probability <- function(list) {
+  if (length(list) != 6) {
+    print('List is incorrect length')
+  }
+  else {
+    total_combinations <- combination(49, 6)
+    winning_probability <- 1 / total_combinations
+    winning_percentage <- winning_probability * 100
+    sprintf("You're chance of winning is %.7f%%", winning_percentage)
+  }
+}
+
+one_ticket_probability(c(1,2,3,4,5,7))
+```
+
+In order to build out function, we made sure that the function was taking in a list that was exactly 6 numbers long. Then, we found the total combinations of numbers using our previously defined function. Finally, since the chance of winning with any specific set of 6 numbers is 1 out of all possible combinations, we made that calculation and printed out the result as a percentage.
+
+Next, we want to allow our players to compare their numbers to the historical values that were selected. We will be using the '649.csv' file to look at historical lottery data in Canada which includes 3,665 drawings from 1982 to 2018.
+
+```{r}
+library(readr)
+history <- read_csv('649.csv')
+print(dim(history))
+```
+
+```{r}
+head(history, 5)
+```
+
+```{r}
+tail(history, 5)
+```
+
+We are going to build a function that will print the number of times a chosen combinated has occurred in the historical data set and also print the probability of winning the big prize in the next drawing.
+
+```{r}
+library(tidyverse)
+historical_win_combos <- pmap(
+  list(
+    a <- history$`NUMBER DRAWN 1`,
+    b <- history$`NUMBER DRAWN 2`,
+    c <- history$`NUMBER DRAWN 3`,
+    d <- history$`NUMBER DRAWN 4`,
+    e <- history$`NUMBER DRAWN 5`,
+    f <- history$`NUMBER DRAWN 6`)
+  , .f <- function(a, b, c, d, e, f) {c(a, b, c, d, e, f)}
+)
+```
+
+```{r}
+check_historical_occurrence <- function(vect, winning_list) {
+  historical_matches <- map(winning_list, function(x) {setequal(x, vect)})
+  num_matches <- sum(unlist(historical_matches))
+  s <- paste('The combination you selected has won ',
+             num_matches,
+             ' times since 1982 (over 36 years). ',
+             'Your chance of winning in the next drawing is 0.0000072%', sep = "")
+  return(s)
+}
+```
+
+```{r}
+check_historical_occurrence(c(3,11,12,14,41,43), historical_win_combos)
+check_historical_occurrence(c(1,2,3,4,5,6), historical_win_combos)
+```
+
+We'll now consider that many players will want to purchase multiple tickets in hopes that it increases their change of winning. We'll hopefully show that chances of winning will not change significantly enough without paying exorbitant amounts of money.
+
+```{r}
+multi_ticket_probability <- function(n) {
+  total_outcomes <- combination(49, 6)
+  winning_prob <- n / total_outcomes
+  winning_percent <- winning_prob * 100
+  sprintf("Based on your selection of %d unique tickets, the probability of you winning the lottery is %.7f%%.", n, winning_percent)
+}
+
+multi_ticket_probability(1)
+multi_ticket_probability(10)
+multi_ticket_probability(100)
+multi_ticket_probability(10000)
+multi_ticket_probability(1000000)
+multi_ticket_probability(6991908)
+multi_ticket_probability(13983816)
+```
+
+We will finish up our project by writing a function to calculate the probability of matching three, four or five of the winning numbers. Typically a lottery will provide much smaller prizes for matching 3 or more numbers. Our players may be interest to know their chances to match those.
+
+Our function will take in an integer between 3 and 5 for the number of winning numbers. It will then print info about the probability of having that number of winnings numbers.
+
+```{r}
+probability_less_6 <- function(n) {
+  successful_outcomes <- combination(6, n)
+  total_outcomes <- combination(49, n)
+  winning_prob <- successful_outcomes / total_outcomes
+  winning_percent <- winning_prob * 100
+  sprintf("The chance of matching %d numbers out of the 6 winning numbers is %.7f%%.", n, winning_percent)
+}
+
+probability_less_6(3)
+probability_less_6(4)
+probability_less_6(5)
+```
+
