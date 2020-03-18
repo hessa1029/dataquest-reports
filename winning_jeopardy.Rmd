@@ -1,0 +1,157 @@
+---
+title: "Winning Jeopardy"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+```
+
+```{r}
+jeopardy <- read_csv('jeopardy.csv')
+print(head(jeopardy, 5))
+print(colnames(jeopardy))
+```
+
+```{r}
+colnames(jeopardy) <- c('show_number', 'air_date', 'round', 'category', 'value', 'question', 'answer')
+print(sapply(jeopardy, typeof))
+```
+
+```{r}
+jeopardy <- jeopardy %>%
+  filter(value != 'None') %>%
+  mutate(value = str_replace_all(value, '[$,]', ''),
+         value = as.numeric(value))
+```
+
+```{r}
+jeopardy <- jeopardy %>%
+  mutate(
+    question = tolower(question),
+    question = str_replace_all(question, '[^A-Za-z0-9 ]', ''),
+    answer = tolower(answer),
+    answer = str_replace_all(answer, '[^A-Za-z0-9 ]', ''),
+    category = tolower(category),
+    category = str_replace_all(category, '[^A-Za-z0-9 ]', '')
+  )
+```
+
+```{r}
+jeopardy <- jeopardy %>%
+  separate(., air_date, into = c('year', 'month', 'day'), sep='-') %>%
+  mutate(
+    year = as.numeric(year),
+    month = as.numeric(month),
+    day = as.numeric(day)
+  )
+```
+
+```{r}
+n_questions <- nrow(jeopardy)
+p_category_expected <- 1/3369
+p_not_category_expected <- 3368/3369
+p_expected <- c(p_category_expected, p_not_category_expected)
+```
+
+```{r}
+categories <- pull(jeopardy, category)
+n_science_categories <- 0
+
+for (c in categories) {
+  if ('science' %in% c) {
+    n_science_categories = n_science_categories + 1
+  }
+}
+
+science_observations = c(n_science_categories, n_questions - n_science_categories)
+chisq.test(science_observations, p = p_expected)
+```
+
+Given such a small p-value, we should reject the null hypothesis that science does not occur more frequently than other topics.
+
+```{r}
+n_history_categories <- 0
+
+for (c in categories) {
+  if ('history' %in% c) {
+    n_history_categories = n_history_categories + 1
+  }
+}
+
+history_observations = c(n_history_categories, n_questions - n_history_categories)
+chisq.test(history_observations, p = p_expected)
+```
+
+Again, the p-value is so small that we would reject the null hypothesis that history questions occur more frequently than others.
+
+```{r}
+n_shakespeare_categories <- 0
+
+for (c in categories) {
+  if ('shakespeare' %in% c) {
+    n_shakespeare_categories = n_shakespeare_categories + 1
+  }
+}
+
+shakespeare_observations = c(n_shakespeare_categories, n_questions - n_shakespeare_categories)
+chisq.test(shakespeare_observations, p = p_expected)
+```
+
+Finally, we would again reject the null hypothesis that Shakespeare questions occur more frequently than other questions.
+
+# Investigating the repetition of old questions
+
+```{r}
+jeopardy <- jeopardy %>%
+  arrange(year, month, day)
+
+questions <- pull(jeopardy, question)
+terms_used <- character(0)
+
+for (q in questions) {
+  split_sentence <- str_split(q, ' ')[[1]]
+  
+  for (term in split_sentence) {
+    if (!term %in% terms_used & nchar(term) >= 6) {
+      terms_used = c(terms_used, term)
+    }
+  }
+}
+```
+
+# High Value vs. Low Value Terms
+
+```{r}
+values <- pull(jeopardy, value)
+value_count = NULL
+
+for (term in terms_used[1:20]) {
+  n_high_value = 0
+  n_low_value = 0
+  
+  for (i in 1:length(questions)) {
+    split_sentence = str_split(questions[i], ' ')[[1]]
+    
+    if (term %in% split_sentence & values[i] >= 800) {
+      n_high_value = n_high_value + 1
+    } else if (term %in% split_sentence & values[i] < 800) {
+      n_low_value = n_low_value + 1
+    }
+  }
+  
+  test <- chisq.test(c(n_high_value, n_low_value), p = c(2/5, 3/5))
+  new_row <- c(term, n_high_value, n_low_value, test$p.value)
+  
+  value_count <- rbind(value_count, new_row)
+}
+```
+
+```{r}
+tidy_value_count <- as_tibble(value_count)
+colnames(tidy_value_count) <- c('term', 'n_high', 'n_low', 'p_value')
+
+head(tidy_value_count, 20)
+```
+
+We received a ton of warnings most likely due to where we have values less than 5. These are probably not useful values. Taking a smaller sample of results, we can see that american, minister and created seem to be more associated with high value questions.
